@@ -11,7 +11,7 @@ class Punch{
     byte DOUT = 34 ,PD_SCK = 14 ;
   public:
     u8 measure_cnt =0; 
-    int per_kg = 25600;
+    int per_kg = 21000;
     float punch_power =0;
     float measure_buf[buf_size];
     void punch_init(){
