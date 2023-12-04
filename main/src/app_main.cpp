@@ -76,13 +76,13 @@ private:
   gpio_num_t add_;
   gpio_num_t decrease_;
   PunchStep state                                   = PunchStep::Delay;
+  TimerHandle_t timer                               = nullptr;
   etl::flat_map<PunchStep, duration_t, 4> delay_map = {
       {PunchStep::Delay, DEFAULT_DURATION},
       {PunchStep::Out, DEFAULT_DURATION},
       {PunchStep::Stay, DEFAULT_DURATION},
       {PunchStep::Back, DEFAULT_DURATION},
   };
-  Instant instant;
 
   void action(PunchStep step) {
     auto [add, decrease] = valve(step);
@@ -99,29 +99,31 @@ private:
     action(state);
   }
 
+  static void timer_callback(TimerHandle_t xTimer) {
+    auto &param = *static_cast<Valve *>(pvTimerGetTimerID(xTimer));
+    param.next_action();
+  }
+
 public:
-  Valve(gpio_num_t add, gpio_num_t decrease) : add_(add), decrease_(decrease) {}
+  Valve(gpio_num_t add, gpio_num_t decrease) : add_(add), decrease_(decrease) {
+    timer = xTimerCreate("ValveTimer", 1, pdTRUE, this, timer_callback);
+  }
+
+  ~Valve() {
+    xTimerDelete(timer, portMAX_DELAY);
+  }
 
   void begin() {
     pinMode(add_, OUTPUT);
     pinMode(decrease_, OUTPUT);
   }
 
-  void set_delay(PunchStep step, duration_t delay) {
-    delay_map[step] = delay;
+  void start_timer() {
+    xTimerStart(timer, portMAX_DELAY);
   }
 
-  void reset_instant() {
-    instant.reset();
-  }
-
-  void poll() {
-    bool run = instant.elapsed() > delay_map[state];
-    if (run) {
-      next_action();
-      ESP_LOGI(TAG, "state %s", to_string(state).c_str());
-      instant.reset();
-    }
+  void stop_timer() {
+    xTimerStop(timer, portMAX_DELAY);
   }
 };
 
@@ -135,7 +137,10 @@ extern "C" [[noreturn]] void app_main(void) {
   using BtnState = peripheral::ButtonState;
 
   punch_btn.on_release = []() {
-    valve.reset_instant();
+    valve.stop_timer();
+  };
+  punch_btn.on_press = []() {
+    valve.start_timer();
   };
   sensor.begin();
   valve.begin();
@@ -145,11 +150,6 @@ extern "C" [[noreturn]] void app_main(void) {
     constexpr auto TAG = "loop";
 
     punch_btn.poll();
-    if (punch_btn.state() == BtnState ::Pressed) {
-      valve.poll();
-    } else {
-      // nothing
-    }
     sensor.measure_once();
   };
   while (true) {
